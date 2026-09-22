@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import { runAgent } from "./agent.ts";
+import { runAgent, type ConversationTurn } from "./agent.ts";
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error(
@@ -12,20 +12,33 @@ if (!process.env.ANTHROPIC_API_KEY) {
 const app = express();
 app.use(express.json());
 
+/** Never trust the client's history payload blindly — drop anything malformed rather than error out. */
+function parseHistory(input: unknown): ConversationTurn[] {
+  if (!Array.isArray(input)) return [];
+  return input.filter(
+    (turn): turn is ConversationTurn =>
+      typeof turn === "object" &&
+      turn !== null &&
+      (turn.role === "user" || turn.role === "assistant") &&
+      typeof turn.text === "string",
+  );
+}
+
 app.post("/api/chat", async (req, res) => {
   const message = typeof req.body.message === "string" ? req.body.message.trim() : "";
   if (!message) {
     res.status(400).json({ error: "message is required" });
     return;
   }
-  console.log(`\n[chat] ${message}`);
+  const history = parseHistory(req.body.history);
+  console.log(`\n[chat] ${message}${history.length ? ` (with ${history.length} prior turns)` : ""}`);
 
   res.setHeader("Content-Type", "application/x-ndjson");
   res.setHeader("Cache-Control", "no-cache");
   const send = (event: unknown) => res.write(`${JSON.stringify(event)}\n`);
 
   try {
-    const result = await runAgent(message, (event) => {
+    const result = await runAgent(message, history, (event) => {
       switch (event.type) {
         case "iteration":
           console.log(`[agent] iteration ${event.n}`);

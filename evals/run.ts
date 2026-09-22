@@ -4,11 +4,10 @@
  * on port 8787 — this script doesn't start the server itself, since it's
  * meant to be run against whatever code you currently have checked out.
  *
- * A case's `turns` are sent as separate, independent requests (never as one
- * conversation) because that's exactly what the real server does today —
- * no history is threaded between requests. That makes the follow-up case a
- * faithful test of the current architecture, not a simulation of one we
- * wish existed.
+ * A case's `turns` are sent as a real conversation: each turn includes every
+ * prior question/answer pair as history, exactly like the UI does. That's
+ * what makes `follow-up-context` a genuine test of whether the server uses
+ * the history it's given, not a simulation of behavior that doesn't exist.
  *
  * Usage: npm run eval -- <label>
  * Writes evals/results/<label>.md, e.g. `npm run eval -- baseline` then
@@ -30,11 +29,16 @@ interface CaseResult {
   checks: { description: string; pass: boolean }[];
 }
 
-async function askOnce(message: string): Promise<{ answer: string; error?: string }> {
+interface Turn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+async function askOnce(message: string, history: Turn[]): Promise<{ answer: string; error?: string }> {
   const res = await fetch(`${SERVER}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, history }),
   });
 
   if (!res.ok || !res.body) {
@@ -70,9 +74,10 @@ async function askOnce(message: string): Promise<{ answer: string; error?: strin
 async function runCase(c: EvalCase): Promise<CaseResult> {
   const startedAt = Date.now();
   const answers: string[] = [];
+  const history: Turn[] = [];
   try {
     for (const turn of c.turns) {
-      const { answer, error } = await askOnce(turn);
+      const { answer, error } = await askOnce(turn, history);
       if (error) {
         return {
           name: c.name,
@@ -84,6 +89,7 @@ async function runCase(c: EvalCase): Promise<CaseResult> {
         };
       }
       answers.push(answer);
+      history.push({ role: "user", text: turn }, { role: "assistant", text: answer });
     }
     return {
       name: c.name,

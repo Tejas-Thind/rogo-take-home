@@ -63,6 +63,10 @@ export const toolSchemas: Anthropic.Tool[] = [
       },
       required: ["query"],
     },
+    // Marks the cache breakpoint for the whole tools array — these four
+    // definitions never change, so caching them saves reprocessing them on
+    // every loop iteration of every question.
+    cache_control: { type: "ephemeral" },
   },
 ];
 

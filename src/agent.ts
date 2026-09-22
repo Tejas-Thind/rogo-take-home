@@ -30,6 +30,29 @@ Ground rules:
 - When a document search doesn't turn up something you were asked about, say it isn't in the documents you can search rather than answering from general knowledge.
 - Write the final answer directly: plain prose, commas and periods rather than em dashes, tables only when they genuinely clarify a comparison. Spell out a company's full name at least once rather than only using its ticker. Skip filler like restating the question back.`;
 
+export interface ConversationTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+/**
+ * Builds the initial message array from prior conversation turns plus the
+ * new question. Only the prior turns' final text goes in, never their raw
+ * tool-call transcripts — that would balloon context size question over
+ * question with no bound. If the analyst wants a precise number from
+ * earlier, the model can just call the tool again; it's available every
+ * turn regardless.
+ */
+export function buildInitialMessages(
+  question: string,
+  history: ConversationTurn[] = [],
+): Anthropic.MessageParam[] {
+  const prior: Anthropic.MessageParam[] = history
+    .filter((turn) => turn.text.trim().length > 0)
+    .map((turn) => ({ role: turn.role, content: turn.text }));
+  return [...prior, { role: "user", content: question }];
+}
+
 export type AgentEvent =
   | { type: "iteration"; n: number }
   | { type: "tool_start"; name: string; input: unknown; label: string }
@@ -88,9 +111,10 @@ async function runToolCall(
 
 export async function runAgent(
   question: string,
+  history: ConversationTurn[],
   onEvent: (event: AgentEvent) => void,
 ): Promise<AgentResult> {
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: question }];
+  const messages: Anthropic.MessageParam[] = buildInitialMessages(question, history);
 
   let answer = "";
   let iterations = 0;
@@ -102,7 +126,11 @@ export async function runAgent(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 16000,
-      system: SYSTEM_PROMPT,
+      // System prompt and tools never change within or across requests, so
+      // caching them cuts real cost/latency on any question that needs more
+      // than one loop iteration — and can even benefit the very first call
+      // of a new question if another one used the same cache recently.
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: toolSchemas,
       messages,
     });

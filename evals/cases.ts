@@ -176,10 +176,18 @@ export const evalCases: EvalCase[] = [
   {
     name: "follow-up-context",
     target:
-      "This case is expected to fail today, by design — it's documenting a real, known gap, not something we expect to pass. The server never threads prior turns back into the conversation, so the second question has nothing to attach 'that' to. A great outcome, given the current architecture, is the model recognizing it lacks context and asking what 'that' refers to, rather than confidently answering something ungrounded.",
+      "The server now threads prior turns into the conversation, so the second question's 'that' should correctly resolve to Umbrella Health's revenue growth from the first turn, and the answer should give the real organic-growth figure (3.1%) rather than asking for clarification.",
     turns: ["What's Umbrella Health's revenue growth?", "How much of that was organic?"],
-    checks: [],
-    note: "Known limitation (no multi-turn memory) — recorded for the write-up, not expected to pass.",
+    checks: [
+      {
+        description: "Resolves 'that' to Umbrella Health's growth without asking for clarification",
+        test: (answers) => !contains(["which company", "clarify", "what does 'that'", "what do you mean"])(last(answers)),
+      },
+      {
+        description: "States the real organic growth figure (3.1%)",
+        test: (answers) => /3\.1/.test(last(answers)),
+      },
+    ],
   },
   {
     name: "terse-query",

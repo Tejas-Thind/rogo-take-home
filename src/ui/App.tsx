@@ -17,12 +17,13 @@ const EXAMPLES = [
 /** Parses one server response as newline-delimited JSON events, updating UI state as they arrive. */
 async function streamChat(
   question: string,
+  history: Message[],
   onStatus: (label: string) => void,
 ): Promise<string> {
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message: question }),
+    body: JSON.stringify({ message: question, history }),
   });
 
   if (!res.ok || !res.body) {
@@ -70,13 +71,14 @@ export function App() {
   async function send(question: string) {
     if (!question.trim() || busy) return;
 
+    const history = messages;
     setMessages((prev) => [...prev, { role: "user", text: question }]);
     setInput("");
     setBusy(true);
     setStatus("Thinking…");
 
     try {
-      const answer = await streamChat(question, setStatus);
+      const answer = await streamChat(question, history, setStatus);
       setMessages((prev) => [...prev, { role: "assistant", text: answer }]);
     } catch (err) {
       setMessages((prev) => [
