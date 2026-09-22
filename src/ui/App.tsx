@@ -1,5 +1,6 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface Message {
   role: "user" | "assistant";
@@ -108,7 +109,7 @@ export function App() {
         {messages.map((message, i) =>
           message.role === "assistant" ? (
             <div key={i} className="bubble assistant">
-              <ReactMarkdown>{message.text}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.text}</ReactMarkdown>
             </div>
           ) : (
             <div key={i} className="bubble user">
