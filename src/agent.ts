@@ -13,7 +13,7 @@ const client = new Anthropic();
 
 const SYSTEM_PROMPT = `You are Rogo Research, an assistant that answers questions about companies for financial analysts.
 
-Use the tools to look up companies, profiles, financials and source documents. Answer the analyst's question.
+Use the tools to look up companies, profiles, financials and source documents. Answer the analyst's question directly, then back it up.
 
 Our coverage universe:
 ${companies
@@ -22,13 +22,17 @@ ${companies
       `- ${c.name} (${c.ticker}) — ${c.sector}, HQ ${c.hq}, ${c.employees} employees. ${c.description}`,
   )
   .join("\n")}
-`;
 
-const EDITOR_PROMPT = `You are an editor. Rewrite the analyst's draft answer so that it reads clearly and is easy to follow. Keep it brief and conversational. Return only the rewritten answer.`;
+Ground rules:
+- If a company reference is ambiguous (a tool will tell you when it is, by naming the candidates), ask the analyst which one they mean rather than guessing. Never silently pick one.
+- If a question is about a company outside this coverage universe, say so plainly. Do not state specific figures for it, even with a caveat — you have no sourced data on it, and a caveated guess is still a guess.
+- Never state a figure for a fiscal period that hasn't been filed yet. If a tool result includes warnings (delayed filings, unaudited figures, preliminary guidance), relay them wherever that data is used, not only when asked about that company directly — the same caveat applies whether the company is the whole question or just one of several being compared.
+- When a document search doesn't turn up something you were asked about, say it isn't in the documents you can search rather than answering from general knowledge.
+- Write the final answer directly: plain prose, commas and periods rather than em dashes, tables only when they genuinely clarify a comparison. Spell out a company's full name at least once rather than only using its ticker. Skip filler like restating the question back.`;
 
 export type AgentEvent =
   | { type: "iteration"; n: number }
-  | { type: "tool_start"; name: string; input: unknown }
+  | { type: "tool_start"; name: string; input: unknown; label: string }
   | { type: "tool_end"; name: string; ms: number }
   | { type: "tool_failed"; name: string; message: string };
 
@@ -44,13 +48,51 @@ function textOf(message: Anthropic.Message): string {
     .join("\n");
 }
 
+/** A short human-readable label for what a tool call is actually doing, for progress display. */
+function describeToolCall(name: string, input: unknown): string {
+  const i = (input ?? {}) as Record<string, unknown>;
+  switch (name) {
+    case "searchCompanies":
+      return `Searching companies for "${i.query}"`;
+    case "getCompanyProfile":
+      return `Looking up ${i.company}'s profile`;
+    case "getFinancials":
+      return `Pulling financials for ${i.company}`;
+    case "searchDocuments":
+      return i.company
+        ? `Searching ${i.company}'s documents for "${i.query}"`
+        : `Searching documents for "${i.query}"`;
+    default:
+      return `Calling ${name}`;
+  }
+}
+
+async function runToolCall(
+  use: Anthropic.ToolUseBlock,
+  onEvent: (event: AgentEvent) => void,
+): Promise<Anthropic.ToolResultBlockParam> {
+  const startedAt = Date.now();
+  onEvent({ type: "tool_start", name: use.name, input: use.input, label: describeToolCall(use.name, use.input) });
+
+  try {
+    const output = await executeTool(use.name, use.input as Record<string, unknown>);
+    onEvent({ type: "tool_end", name: use.name, ms: Date.now() - startedAt });
+    return { type: "tool_result", tool_use_id: use.id, content: JSON.stringify(output) };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    onEvent({ type: "tool_failed", name: use.name, message });
+    onEvent({ type: "tool_end", name: use.name, ms: Date.now() - startedAt });
+    return { type: "tool_result", tool_use_id: use.id, content: message, is_error: true };
+  }
+}
+
 export async function runAgent(
   question: string,
   onEvent: (event: AgentEvent) => void,
 ): Promise<AgentResult> {
   const messages: Anthropic.MessageParam[] = [{ role: "user", content: question }];
 
-  let draft = "";
+  let answer = "";
   let iterations = 0;
 
   while (iterations < MAX_ITERATIONS) {
@@ -72,50 +114,20 @@ export async function runAgent(
     );
 
     if (toolUses.length === 0) {
-      draft = textOf(response);
+      answer = textOf(response);
       break;
     }
 
-    const toolResults: Anthropic.ToolResultBlockParam[] = [];
-
-    for (const use of toolUses) {
-      const startedAt = Date.now();
-      onEvent({ type: "tool_start", name: use.name, input: use.input });
-
-      let content: string;
-      try {
-        const output = await executeTool(use.name, use.input as Record<string, unknown>);
-        content = JSON.stringify(output);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        content = `${use.name} returned: ${message}`;
-        onEvent({ type: "tool_failed", name: use.name, message });
-      }
-
-      onEvent({ type: "tool_end", name: use.name, ms: Date.now() - startedAt });
-      toolResults.push({ type: "tool_result", tool_use_id: use.id, content });
-    }
-
+    // Tool calls in a single turn are independent and read-only, so run them
+    // together instead of waiting on each one in sequence.
+    const toolResults = await Promise.all(toolUses.map((use) => runToolCall(use, onEvent)));
     messages.push({ role: "user", content: toolResults });
   }
 
-  if (!draft) {
-    draft =
+  if (!answer) {
+    answer =
       "I looked at a number of sources but ran out of research steps before I could pull the answer together. Try asking a narrower question.";
   }
 
-  // Polish the draft before showing it to the analyst.
-  const edited = await client.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    system: EDITOR_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Research transcript:\n${JSON.stringify(messages)}\n\nDraft answer:\n${draft}\n\nRewrite the draft answer.`,
-      },
-    ],
-  });
-
-  return { answer: textOf(edited), iterations };
+  return { answer, iterations };
 }
