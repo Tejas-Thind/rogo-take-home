@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -67,6 +67,18 @@ export function App() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("Thinking…");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Refocus the composer once a response lands, so the analyst can keep
+  // typing the next question without clicking back into the box.
+  useEffect(() => {
+    if (!busy) inputRef.current?.focus();
+  }, [busy]);
+
+  function newConversation() {
+    setMessages([]);
+    setInput("");
+  }
 
   async function send(question: string) {
     if (!question.trim() || busy) return;
@@ -93,8 +105,15 @@ export function App() {
   return (
     <div className="app">
       <header>
-        <h1>Rogo Research</h1>
-        <p>Ask a question about a company in our coverage universe.</p>
+        <div>
+          <h1>Rogo Research</h1>
+          <p>Ask a question about a company in our coverage universe.</p>
+        </div>
+        {messages.length > 0 && (
+          <button type="button" className="new-conversation" onClick={newConversation}>
+            New conversation
+          </button>
+        )}
       </header>
 
       <div className="transcript">
@@ -131,6 +150,7 @@ export function App() {
         }}
       >
         <input
+          ref={inputRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask a research question…"

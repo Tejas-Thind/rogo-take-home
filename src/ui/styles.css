@@ -33,6 +33,28 @@ header p {
   font-size: 14px;
 }
 
+header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.new-conversation {
+  border: 1px solid #dde2e8;
+  background: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: #33414f;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.new-conversation:hover {
+  border-color: #b9c2cc;
+}
+
 .transcript {
   flex: 1;
   display: flex;
